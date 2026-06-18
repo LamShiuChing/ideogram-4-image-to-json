@@ -29,10 +29,23 @@ def test_helpers():
 
     # JSON parse tolerates fences
     assert nodes._parse_json('```json\n{"a": 1}\n```')["a"] == 1
+    # tolerates trailing prose + trailing commas
+    assert nodes._parse_json('{"a":1,}\nhere you go!')["a"] == 1
+    # salvages a TRUNCATED tail, keeping earlier complete elements
+    truncated = '{"elements":[{"desc":"a"},{"desc":"b"},{"desc":"c'
+    got = nodes._parse_json(truncated)
+    assert [e["desc"] for e in got["elements"]] == ["a", "b"]
+    # salvages a tail corrupted by an unescaped quote
+    bad = '{"high_level_description":"ok","elements":[{"desc":"sign reads "OPEN" loud"}]}'
+    assert nodes._parse_json(bad)["high_level_description"] == "ok"
 
-    # anonymity rules injected only when requested
-    assert "{anon}" not in nodes._INSTRUCTION.replace("{anon}", nodes._ANON_RULES)
-    assert "PRIVACY MODE" in nodes._ANON_RULES
+    # person block swaps between detail and strict-privacy
+    assert "{person}" in nodes._INSTRUCTION
+    assert "PRIVACY MODE" in nodes._ANON_RULES and "tattoos" in nodes._ANON_RULES
+    assert "hands" in nodes._DETAIL_PERSON and "hair" in nodes._DETAIL_PERSON
+    # parts blocks: full mentions body parts, anon variant forbids them
+    assert "foot or shoe" in nodes._PARTS_FULL
+    assert "Do NOT create elements for face" in nodes._PARTS_ANON
 
     # overlay draws without error and returns a same-size IMAGE tensor
     ov = nodes._draw_overlay(
@@ -40,11 +53,18 @@ def test_helpers():
         [{"bbox": [100, 200, 900, 800], "desc": "x"}],
     )
     assert nodes._pil_to_tensor(ov).shape[1:3] == (90, 120)
+
+    # gen size preserves AR, multiples of 64, longer side = base
+    assert nodes._gen_size(1000, 1000, 1280) == (1280, 1280)
+    gw, gh = nodes._gen_size(1600, 900, 1280)  # 16:9 landscape
+    assert gw == 1280 and gh % 64 == 0 and abs(gw / gh - 1600 / 900) < 0.05
+    gw, gh = nodes._gen_size(900, 1600, 1280)  # 9:16 portrait -> longer = height
+    assert gh == 1280 and gw % 64 == 0
     print("helpers OK")
 
 
 def test_generate_mocked(monkeypatch):
-    monkeypatch.setattr(nodes, "_load_qwen", lambda name: (object(), object()))
+    monkeypatch.setattr(nodes, "_load_qwen", lambda *a, **k: (object(), object()))
 
     fake = json.dumps({
         "high_level_description": "A red square test image.",
@@ -64,12 +84,14 @@ def test_generate_mocked(monkeypatch):
     node = nodes.Id4JsonPromptFromImage()
     img = torch.zeros(1, 100, 100, 3)  # 100x100 -> pixel coords map 1:10 to 0-1000
     img[0, :, :, 0] = 1.0
-    compact, _, overlay = node.generate(
-        img, "Qwen/Qwen2.5-VL-3B-Instruct", 8, True, False
+    compact, _, overlay, gw, gh = node.generate(
+        img, "Qwen/Qwen2.5-VL-7B-Instruct", 8, True, False, False, 1280, False
     )["result"]
     obj = json.loads(compact)
     # overlay is a ComfyUI IMAGE tensor [1,H,W,3] matching the input size
     assert tuple(overlay.shape) == (1, 100, 100, 3)
+    # square input -> square gen size
+    assert (gw, gh) == (1280, 1280)
 
     assert obj["high_level_description"] == "A red square test image."
     # non-photo -> art_style branch, no 'photo' key
@@ -90,6 +112,39 @@ def test_generate_mocked(monkeypatch):
     print("generate (mocked) OK")
 
 
+def test_hybrid_mocked(monkeypatch):
+    # global call returns style/background JSON; region calls return a phrase
+    def fake_run(model, processor, img, instruction, max_new_tokens=1024):
+        if "ONE JSON object" in instruction:
+            return json.dumps({
+                "high_level_description": "two people standing",
+                "aesthetics": "", "lighting": "", "photo": "",
+                "art_style": "", "medium": "photograph", "background": "a street",
+            })
+        return "a detailed region phrase"
+
+    monkeypatch.setattr(nodes, "_load_qwen", lambda *a, **k: (object(), object()))
+    monkeypatch.setattr(nodes, "_run_qwen", fake_run)
+    # YOLO returns two boxes; skip real ultralytics
+    monkeypatch.setattr(
+        nodes, "_detect_boxes",
+        lambda pil, dets, conf: [([10, 10, 40, 40], "face"), ([50, 60, 80, 90], "hand")],
+    )
+
+    node = nodes.Id4JsonPromptFromImage()
+    img = torch.zeros(1, 100, 100, 3)
+    compact, _, _, _, _ = node.generate(
+        img, "Qwen/Qwen2.5-VL-7B-Instruct", 8, True, False, False, 1280, False,
+        "face_yolov8m.pt", "hand_yolov8s.pt", "(none)", "(none)", 0.35,
+    )["result"]
+    obj = json.loads(compact)
+    assert obj["high_level_description"] == "two people standing"
+    els = obj["compositional_deconstruction"]["elements"]
+    assert len(els) == 2 and els[0]["bbox"] == [100, 100, 400, 400]
+    assert els[0]["desc"] == "a detailed region phrase"
+    print("hybrid (mocked) OK")
+
+
 if __name__ == "__main__":
     test_helpers()
 
@@ -98,4 +153,5 @@ if __name__ == "__main__":
             setattr(obj, name, val)
 
     test_generate_mocked(_MP())
+    test_hybrid_mocked(_MP())
     print("ALL PASS")

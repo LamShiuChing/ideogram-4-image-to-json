@@ -7,3 +7,4 @@ memory/
 *.log
 DEVLOG.md
 CLAUDE.md
+image_ideogram4_t2i*.json

@@ -42,6 +42,7 @@ The Qwen2.5-VL model downloads automatically the first time you run the node
    - `json_prompt` — compact JSON (feed this to Ideogram-4 / save it).
    - `preview` — the same JSON, pretty-printed. Also shown inside the node.
    - `bbox_overlay` — the image with numbered boxes drawn on it.
+   - `gen_width` / `gen_height` — a generation size that keeps the input's aspect ratio (wire into the Ideogram-4 node's width/height).
 
 ### Inputs
 
@@ -52,6 +53,11 @@ The Qwen2.5-VL model downloads automatically the first time you run the node
 | `max_elements` | Max number of regions/objects to caption. |
 | `include_colors` | Add dominant `#RRGGBB` color palettes to the JSON. |
 | `anonymous` | **Privacy mode.** Don't describe a person's face, eyes, hair, skin, body, tattoos, age, etc. — only generic terms (a woman, a man, she, he) plus their clothing, outfit, and jewelry. |
+| `detect_parts` | Ask the VLM to also emit separate boxes for sub-parts (face/hair/hands/feet/clothing). Rough — for precise part boxes use the YOLO detectors below. |
+| `gen_base_size` | Longer side (px, ×64) for the `gen_width`/`gen_height` outputs. |
+| `load_4bit` | Load the model in 4-bit (nf4, needs bitsandbytes) so 7B fits ~16 GB VRAM. |
+| `detector_1..4` *(optional)* | Pick ultralytics YOLO models from `models/ultralytics`. When any is set, **hybrid mode**: YOLO finds the boxes, the VLM captions each crop (more accurate part/person boxes than the VLM alone). |
+| `yolo_confidence` *(optional)* | Detection confidence threshold for the YOLO detectors. |
 
 ---
 

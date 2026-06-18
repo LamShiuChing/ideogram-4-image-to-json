@@ -30,10 +30,13 @@ def main():
     image = torch.from_numpy(arr)[None, ...]  # [1,H,W,3]
 
     node = nodes.Id4JsonPromptFromImage()
-    compact, pretty, overlay = node.generate(
-        image, "Qwen/Qwen2.5-VL-3B-Instruct", 8, True, False
+    model_name = sys.argv[1] if len(sys.argv) > 1 else "Qwen/Qwen2.5-VL-7B-Instruct"
+    load_4bit = len(sys.argv) > 2 and sys.argv[2] == "4bit"
+    compact, pretty, overlay, gw, gh = node.generate(
+        image, model_name, 8, True, False, False, 1280, load_4bit
     )["result"]
     print(pretty)
+    print("gen size:", gw, "x", gh)
 
     obj = json.loads(compact)
     assert "compositional_deconstruction" in obj
